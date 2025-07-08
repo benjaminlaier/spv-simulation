@@ -4,10 +4,31 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from .analysis import compute_msd_cm, rdf_pol_alignment_avg
 
-def plot_voronoi(cells, pol, L, run="any", step=None, plot=True, plot_edges = True, plot_vertices = True, plot_midpoints = True, plot_polarizations = True, subfolder="images"):
-    fig, ax = plt.subplots(figsize=(8, 8))
+def plot_voronoi(
+    cells,
+    pol,
+    L,
+    run="any",
+    step=None,
+    plot=True,
+    plot_edges=True,
+    plot_vertices=True,
+    plot_midpoints=True,
+    plot_polarizations=True,
+    subfolder="images",
+    save=True,
+    pixel_size=1024,
+    dpi=150,
+):
+    """
+    Plots and optionally saves a Voronoi diagram of size `pixel_size`×`pixel_size` pixels,
+    with no margins at the edges.
+    """
+    # compute figure size in inches so that pixel_size = dpi * inches
+    inch_size = pixel_size / dpi
+    fig, ax = plt.subplots(figsize=(inch_size, inch_size), dpi=dpi)
 
-    # collect all midpoints and vertices first
+    # collect midpoints, vertices, and unique edges
     midpoints = []
     vertices_all = []
     edges = []
@@ -19,79 +40,86 @@ def plot_voronoi(cells, pol, L, run="any", step=None, plot=True, plot_edges = Tr
             midpoints.append([x, y])
 
         vertices = np.array(cell['vertices'])
-
-        # plot edges only once
         for j in range(len(vertices)):
-            p1 = tuple(np.round(vertices[j], decimals=6))
-            p2 = tuple(np.round(vertices[(j+1) % len(vertices)],decimals=6))
-
-            # create an order-independent edge key
+            p1 = tuple(np.round(vertices[j], 6))
+            p2 = tuple(np.round(vertices[(j+1) % len(vertices)], 6))
             edge = tuple(sorted([p1, p2]))
             if edge not in edges_plotted:
                 edges_plotted.add(edge)
                 edges.append([p1, p2])
-        
-
         vertices_all.append(vertices)
 
     midpoints = np.array(midpoints)
 
-    # plot midpoints (all at once)
+    # plot midpoints
     if plot_midpoints:
-        ax.scatter(midpoints[:, 0], midpoints[:, 1], c='r', marker='.', s=10)
+        color = 'r' if plot_edges else 'k'
+        ax.scatter(midpoints[:, 0], midpoints[:, 1], c=color, marker='.', s=10)
 
-    # plot vertices (all at once)
+    # plot vertices
     if plot_vertices:
-        vertices_all = np.vstack(vertices_all)
-        ax.scatter(vertices_all[:, 0], vertices_all[:, 1], c='g', marker='.', s=1)
+        verts = np.vstack(vertices_all)
+        ax.scatter(verts[:, 0], verts[:, 1], c='g', marker='.', s=1)
 
-    # plot edges (all at once)
+    # plot edges
     if plot_edges:
-        edge_collection = LineCollection(edges, colors='black', linewidths=1, alpha=0.5)
-        ax.add_collection(edge_collection)
-    
-    # plot polarisations (all at once)
+        a = 0.5 if plot_midpoints else 1.0
+        edge_coll = LineCollection(edges, colors='black', linewidths=1, alpha=a)
+        ax.add_collection(edge_coll)
+
+    # plot polarizations
     if plot_polarizations:
-        ax.quiver(midpoints[:, 0], midpoints[:, 1], pol[:, 0], pol[:, 1],
-                angles='xy', scale_units='xy', scale=1.5, color='b', alpha=0.5)
-
-        
-
-        # global polarization box
-        global_pol = np.sum(pol, axis=0) / len(pol)
-
-        # small inset box
-        inset_size = L * 0.08   # 15% of box size
-        inset_x0 = L * 0.91     # position at lower right
+        ax.quiver(
+            midpoints[:, 0], midpoints[:, 1],
+            pol[:, 0], pol[:, 1],
+            angles='xy', scale_units='xy', scale=1.5,
+            color='b', alpha=0.5
+        )
+        # global polarization inset
+        global_pol = pol.mean(axis=0)
+        inset_size = L * 0.08
+        inset_x0 = L * 0.91
         inset_y0 = L * 0.01
-
-        # draw inset rectangle
-        ax.add_patch(plt.Rectangle((inset_x0, inset_y0), inset_size, inset_size,
-                                edgecolor='black', facecolor='none', lw=1.5))
-
-        # draw global polarization arrow inside inset
+        ax.add_patch(
+            plt.Rectangle((inset_x0, inset_y0), inset_size, inset_size,
+                          edgecolor='black', facecolor='none', lw=1.5)
+        )
         norm = np.linalg.norm(global_pol)
         arrow_scale = inset_size * 0.4 / (norm + 1e-6)
-        ax.quiver(inset_x0 + inset_size/2, inset_y0 + inset_size/2,
-                global_pol[0]*arrow_scale, global_pol[1]*arrow_scale,
-                    angles='xy', scale_units='xy', scale = 1, color='r', alpha=0.5, width = 0.005, headwidth=3, headlength=4)
+        ax.quiver(
+            inset_x0 + inset_size/2, inset_y0 + inset_size/2,
+            global_pol[0]*arrow_scale, global_pol[1]*arrow_scale,
+            angles='xy', scale_units='xy', scale=1,
+            color='r', alpha=0.5, width=0.005, headwidth=3, headlength=4
+        )
 
+    # remove axis decorations and margins
     ax.set_xlim(0, L)
     ax.set_ylim(0, L)
     ax.set_aspect('equal', adjustable='box')
     ax.set_xticks([])
     ax.set_yticks([])
+    ax.margins(0)
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
 
     # save plot
-    output_dir = os.path.join("data", run, subfolder)
-    os.makedirs(output_dir, exist_ok=True)
-    filename = os.path.join(output_dir, f"voronoi_{step}.png")
-    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    if save:
+        output_dir = os.path.join("data", run, subfolder)
+        os.makedirs(output_dir, exist_ok=True)
+        filename = os.path.join(output_dir, f"voronoi_{step}.png")
+        plt.savefig(
+            filename,
+            dpi=dpi,
+            bbox_inches='tight',
+            pad_inches=0
+        )
 
+    # show or close
     if plot:
         plt.show()
     else:
         plt.close(fig)
+
 
 def MSD_plot(run):
     output_dir = os.path.join("data", run)
