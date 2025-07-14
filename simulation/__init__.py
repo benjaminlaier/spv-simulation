@@ -6,3 +6,4 @@ from .analysis import compute_msd_cm
 from .visualization import plot_voronoi
 from .utils import make_video_from_images
 from .geometry import voronoi_tessellation
+from .run import simulation_loop
