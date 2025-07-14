@@ -16,8 +16,7 @@ import simulation.initialization as init
 
 
 # run the simulation
-# runs = ["P_O_3.0", "P_O_3.1", "P_O_3.2", "P_O_3.3", "P_O_3.4", "P_O_3.5", "P_O_3.6", "P_O_3.7", "P_O_3.8", "P_O_3.9", "P_O_4.0"]
-runs = ["P_O_3.0", "P_O_3.1"]
+runs = ["P_O_3.0", "P_O_3.1", "P_O_3.2", "P_O_3.3", "P_O_3.4", "P_O_3.5", "P_O_3.6", "P_O_3.7", "P_O_3.8", "P_O_3.9", "P_O_4.0"]
 idx = int(sys.argv[1])
 run = runs[idx]
 
