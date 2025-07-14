@@ -117,21 +117,21 @@ def simulation_loop(N = 100, phi = 1.0, dt = 0.01, T = 100, P_0 = 3.8, J = 0.00,
     )
     
 # run the simulation
-runs = ["test"]
+runs = ["P_O_3.0", "P_O_3.1", "P_O_3.2", "P_O_3.3", "P_O_3.4", "P_O_3.5", "P_O_3.6", "P_O_3.7", "P_O_3.8", "P_O_3.9", "P_O_4.0"]
 P_0_ls = [3.0,3.1,3.2,3.3,3.4,3.5,3.6,3.7,3.8,3.9,4.0]
 for i, run in enumerate(runs):
     # Run the simulation with the specified parameters
     simulation_loop(
-        N=50, 
+        N=500, 
         phi=1.00, 
         dt=0.01, 
-        T=1, 
+        T=100, 
         P_0=P_0_ls[i], 
         J=0.00, 
         run=run, 
-        equi_steps=10, 
+        equi_steps=500, 
         plot=False, 
-        save_interval=5, 
+        save_interval=100, 
         load_run=None
     )
     print(f"Simulation for run '{run}' completed.")
@@ -156,6 +156,7 @@ for run in runs:
         plot_voronoi(cells, None, L, run=run, step=t, plot=False, plot_edges=False, plot_midpoints=True, plot_polarizations=False, plot_vertices=False, subfolder="images_midpoints")
     
     # make video for the edges
+    print(f"Making video for edges for run: {run}")
     make_video_from_images(
         run,
         output_video="edges.mp4",
@@ -165,11 +166,56 @@ for run in runs:
         subfolder="images_edges",
     )
     #make video for the midpoints
+    print(f"Making video for midpoints for run: {run}")
     make_video_from_images(
         run,
         output_video="midpoints.mp4",
         start=0,
         step=1,
+        fps=10,
+        subfolder="images_midpoints",
+    )
+
+    #make faster videos for the edges
+    print(f"Making faster video for edges for run: {run}")
+    make_video_from_images(
+        run,
+        output_video="edges_fast.mp4",
+        start=0,
+        step=10,
+        fps=10,
+        subfolder="images_edges",
+    )
+
+    #make faster videos for the midpoints
+    print(f"Making faster video for midpoints for run: {run}")
+    make_video_from_images(
+        run,
+        output_video="midpoints_fast.mp4",
+        start=0,
+        step=10,
+        fps=10,
+        subfolder="images_midpoints",
+    )
+
+    #make superfaster videos for the edges
+    print(f"Making superfast video for edges for run: {run}")
+    make_video_from_images(
+        run,
+        output_video="edges_superfast.mp4",
+        start=0,
+        step=100,
+        fps=10,
+        subfolder="images_edges",
+    )
+
+    #make faster videos for the midpoints
+    print(f"Making superfast video for midpoints for run: {run}")
+    make_video_from_images(
+        run,
+        output_video="midpoints_superfast.mp4",
+        start=0,
+        step=100,
         fps=10,
         subfolder="images_midpoints",
     )
