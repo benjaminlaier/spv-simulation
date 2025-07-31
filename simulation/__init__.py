@@ -1,6 +1,7 @@
 from .initialization import initialize_box
 from .initialization import load_configuration
 from .dynamics import update_positions_and_polarizations
+from .dynamics import update_positions_and_polarizations_parallel
 from .analysis import rdf_pol_alignment_avg
 from .analysis import compute_msd_cm
 from .visualization import plot_voronoi
