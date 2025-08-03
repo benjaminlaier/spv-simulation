@@ -27,7 +27,7 @@ def compute_tissue_energy(points, K_A, K_P, A0, P0, L, N):
     energy = np.sum(K_A*(areas-A0)**2) + np.sum(K_P*(perimeters-P0)**2)
     return energy
 
-def compute_force_for_cell(i, points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5):
+def compute_force_for_cell(i, points, cells, perimeters, areas, adjacency_matrix, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5):
     """
     Compute the force for a single cell i.
     
@@ -37,6 +37,14 @@ def compute_force_for_cell(i, points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5):
         Index of the cell to compute force for.
     points : np.array
         Array of shape (N,2) with the positions of all cells.
+    cells : list
+        Pre-computed Voronoi tessellation.
+    perimeters : np.array
+        Pre-computed perimeters for all cells.
+    areas : np.array
+        Pre-computed areas for all cells.
+    adjacency_matrix : np.array
+        Pre-computed adjacency matrix.
     K_A : float
         Stiffness coefficient for area term.
     A_0 : float
@@ -57,8 +65,6 @@ def compute_force_for_cell(i, points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5):
     force_i : np.array
         Array of shape (2,) with the force acting on cell i.
     """
-    cells = voronoi_tessellation(points, L, N)
-    perimeters, areas, adjacency_matrix = properties_of_voronoi_tessellation(cells)
     
     # get the neighbors of the cell of interest
     neighbors = np.where(adjacency_matrix[i] == 1)[0]
@@ -293,9 +299,13 @@ def compute_tissue_force_parallel(points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5
     
     N = len(points)
     
-    # Compute forces in parallel
+    # Compute Voronoi tessellation ONCE for all cells
+    cells = voronoi_tessellation(points, L, N)
+    perimeters, areas, adjacency_matrix = properties_of_voronoi_tessellation(cells)
+    
+    # Compute forces in parallel, passing pre-computed tessellation data
     forces_list = Parallel(n_jobs=n_jobs)(
-        delayed(compute_force_for_cell)(i, points, K_A, A_0, K_P, P_0, L, N, epsilon) 
+        delayed(compute_force_for_cell)(i, points, cells, perimeters, areas, adjacency_matrix, K_A, A_0, K_P, P_0, L, N, epsilon) 
         for i in range(N)
     )
     
