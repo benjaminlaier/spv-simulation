@@ -27,7 +27,7 @@ def compute_tissue_energy(points, K_A, K_P, A0, P0, L, N):
     energy = np.sum(K_A*(areas-A0)**2) + np.sum(K_P*(perimeters-P0)**2)
     return energy
 
-def compute_force_for_cell(i, points, cells, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5):
+def compute_force_for_cell(i, points, perimeters, areas, adjacency_matrix, cells, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5):
     """
     Compute the force for a single cell i.
     
@@ -65,83 +65,109 @@ def compute_force_for_cell(i, points, cells, K_A, A_0, K_P, P_0, L, N, epsilon=1
     force_i : np.array
         Array of shape (2,) with the force acting on cell i.
     """
-    # get properties of the Voronoi tessellation
-    perimeters, areas, adjacency_matrix = properties_of_voronoi_tessellation(cells)
-
     
     # get the neighbors of the cell of interest
     neighbors = np.where(adjacency_matrix[i] == 1)[0]
-    
+
     # filter to only consider the cell itself and its neighbors
-    points_subset = points[np.concatenate(([i], neighbors))]
-    perimeters_subset = perimeters[np.concatenate(([i], neighbors))]
-    areas_subset = areas[np.concatenate(([i], neighbors))]
+    indices_subset = np.concatenate(([i], neighbors))
+    points_subset = points[indices_subset]
+    perimeters_subset = perimeters[indices_subset]
+    areas_subset = areas[indices_subset]
+    cells_subset = [cells[idx] for idx in indices_subset]
+    # For subset, cell of interest is at index 0, neighbors at 1,2,...
+    neighbors_subset = np.arange(1, len(neighbors)+1)
 
     # calculate the tissue Energy only considering the the cell of interest and its neighbors
     energy_init = np.sum(K_A*(areas_subset-A_0)**2) + np.sum(K_P*(perimeters_subset-P_0)**2)
 
     # get the vertices of the cell of interest
-    midpoint_vertices = np.array(cells[i]['vertices'])
+    midpoint_vertices = np.array(cells_subset[0]['vertices'])
 
-    #finding the shared vertices between the cell of interest and its neighbors
-    neighboring_vertices_ls, shared_vertices_indices, failed_init = \
-        find_shared_vertices(midpoint_vertices, cells, neighbors, L, kind = "Init: ")
-    
-    if failed_init:
-        raise Exception(f"Init: Finding shared vertices failed for cell {i}!")
-    
+    # Find shared vertices using face info
+    shared_vertices_indices = []  # List of indices (for each neighbor) of vertices in neighbor that are shared with cell 0
+    neighboring_vertices_ls = []  # List of all vertices for each neighbor
+    for j, neighbor_idx in enumerate(neighbors_subset):
+        neighbor_cell = cells_subset[neighbor_idx]
+        neighbor_vertices = np.array(neighbor_cell['vertices'])
+        neighboring_vertices_ls.append(neighbor_vertices)
+        # Find the face in the NEIGHBOR cell that points to the middle cell (cell 0)
+        found = False
+        for face in neighbor_cell['faces']:
+            if face['adjacent_cell'] == indices_subset[0]:
+                # face['vertices'] gives indices in the neighbor cell of vertices adjacent to the middle cell
+                shared_vertices_indices.append(np.array(face['vertices']))
+                found = True
+                break
+        if not found:
+            raise Exception(f"Could not find face in neighbor {indices_subset[neighbor_idx]} pointing to middle cell {indices_subset[0]} in cell {i}")
+
     force_i = np.zeros(2)
-    
+
     for d in range(2):  # x and y direction
         for eps_sign in [1, -1]:
             shifted_points = np.copy(points_subset)
             shifted_points[0, d] += eps_sign * epsilon
-            
+
             # compute the voronoi tessalation for the relevant subset
-            cells_subset = voronoi_tessellation(shifted_points, L, N)
-    
+            cells_subset_shifted = voronoi_tessellation(shifted_points, L, len(indices_subset))
+
             # get the vertices of the cell of interest
-            midpoint_vertices_shifted = np.array(cells_subset[0]['vertices'])
+            midpoint_vertices_shifted = np.array(cells_subset_shifted[0]['vertices'])
 
-            neighbors_subset = np.arange(1, len(neighbors)+1)
-
-            neighboring_vertices_ls_shifted, shared_vertices_indices_shifted, failed_shifted = \
-                find_shared_vertices(midpoint_vertices_shifted, cells_subset, neighbors_subset, L, kind = "Shifted: ")
-            
-            shared_vertices_shifted = np.array([
-                neighboring_vertices_ls_shifted[k][shared_vertices_indices_shifted[k]] for k in range(len(neighbors))])
+            # get vertices for cell of interest and its neighbors in shifted subset
+            neighbors_subset_shifted = np.arange(1, len(neighbors)+1)
+            # For each neighbor, get the shifted vertices
+            neighboring_vertices_ls_shifted = neighboring_vertices_ls  # Start with original
+            shared_vertices_shifted = []
+            failed_shifted = False
+            for j, neighbor_idx in enumerate(neighbors_subset_shifted):
+                neighbor_cell_shifted = cells_subset_shifted[neighbor_idx]
+                found = False
+                for face in neighbor_cell_shifted['faces']:
+                    if face['adjacent_cell'] == 0:
+                        shared_idx = face['vertices']
+                        shared_vertices_shifted.append(np.array(neighbor_cell_shifted['vertices'])[shared_idx])
+                        found = True
+                        break
+                if not found:
+                    print(f"Problem found with eps_sign = {eps_sign}, direction {d}, neighbor {indices_subset[neighbor_idx]} not found in shifted cell {i}. Retrying with opposite sign.")
+                    failed_shifted = True
+                    break
 
             if failed_shifted:
                 if eps_sign == 1:
-                    continue  # try eps_sign = -1
+                    print("Retrying with eps_sign = -1")
+                    continue
                 else:
-                    break  # both failed
+                    raise Exception("Problem found with eps_sign = -1, breaking")
 
+            # update ONLY the shared (adjacent) vertices of the neighboring cells
+            for j in range(len(neighbors)):
+                old_shared = neighboring_vertices_ls[j][shared_vertices_indices[j]]
+                neighboring_vertices_ls_shifted[j][shared_vertices_indices[j]] = reorder_two_by_distance(old_shared, shared_vertices_shifted[j])
+
+                #calculating the new perimeters and areas for the relevant subset
+                perimeters_subset[j+1] = polygon_perimeter(neighboring_vertices_ls_shifted[j])
+                areas_subset[j+1] = polygon_area(neighboring_vertices_ls_shifted[j])
+
+            #calculate the new perimeter and area for the cell of interest
+            perimeters_subset[0] = polygon_perimeter(midpoint_vertices_shifted)
+            areas_subset[0] = polygon_area(midpoint_vertices_shifted)
+
+            # Compute new tissue energy with the shifted points
+            energy_shifted = np.sum(K_A*(areas_subset-A_0)**2) + np.sum(K_P*(perimeters_subset-P_0)**2)
+
+            # Compute force contribution
+            force_i[d] = -(energy_shifted - energy_init) / (eps_sign * epsilon)
+            
+            # Check if the shifted computation was successful
             if not failed_shifted:
-                if eps_sign == 1:
-                    break
-        
-        # update the vertices of the neighboring cells that have changed
-        neighboring_vertices_ls_shifted = copy.copy(neighboring_vertices_ls)
-
-        for j, neighbor in enumerate(neighbors):
-            old_shared = neighboring_vertices_ls[j][shared_vertices_indices[j]]
-            neighboring_vertices_ls_shifted[j][shared_vertices_indices[j]] = \
-                reorder_two_by_distance(old_shared, shared_vertices_shifted[j])
-
-            #calculating the new perimeters and areas for the relevant subset
-            perimeters_subset[j+1] = polygon_perimeter(neighboring_vertices_ls_shifted[j])
-            areas_subset[j+1] = polygon_area(neighboring_vertices_ls_shifted[j])
-
-        #calculate the new perimeter and area for the cell of interest
-        perimeters_subset[0] = polygon_perimeter(midpoint_vertices_shifted)
-        areas_subset[0] = polygon_area(midpoint_vertices_shifted)
-
-        # Compute new tissue energy with the shifted points
-        energy_shifted = np.sum(K_A*(areas_subset-A_0)**2) + np.sum(K_P*(perimeters_subset-P_0)**2)
-
-        # Compute force contribution
-        force_i[d] = -(energy_shifted - energy_init) / (eps_sign * epsilon)
+                    if eps_sign == 1:
+                        break
+                    elif eps_sign == -1:
+                        print("Retry with eps_sign = -1 successful!")
+                        break
 
     return force_i
 
@@ -173,96 +199,92 @@ def compute_tissue_force(points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5):
     """
     N = len(points)
     forces = np.zeros((N, 2))
-    
-    cells = voronoi_tessellation(points, L, N)
-    perimeters, areas, adjacency_matrix = properties_of_voronoi_tessellation(cells)
-    
-    # Loop over each point and compute numerical derivatives
-    for i in range(N):
-        # get the neighbors of the cell of interest
-        neighbors = np.where(adjacency_matrix[i] == 1)[0]
-        
-        # filter to only consider the cell itself and its neighbors
-        points_subset = points[np.concatenate(([i], neighbors))]
-        perimeters_subset = perimeters[np.concatenate(([i], neighbors))]
-        areas_subset = areas[np.concatenate(([i], neighbors))]
 
-        # calculate the tissue Energy only considering the the cell of interest and its neighbors
+    cells = voronoi_tessellation(points, L, N)
+    perimeters, areas, adjacency_matrix = properties_of_voronoi_tessellation(cells)[:3]
+
+    # Loop over each cell and compute force using adjacency/face-based logic
+    for i in range(N):
+        neighbors = np.where(adjacency_matrix[i] == 1)[0]
+        indices_subset = np.concatenate(([i], neighbors))
+        points_subset = points[indices_subset]
+        perimeters_subset = perimeters[indices_subset].copy()
+        areas_subset = areas[indices_subset].copy()
+        cells_subset = [cells[idx] for idx in indices_subset]
+        neighbors_subset = np.arange(1, len(neighbors)+1)
+
         energy_init = np.sum(K_A*(areas_subset-A_0)**2) + np.sum(K_P*(perimeters_subset-P_0)**2)
 
-        # save for each neighbor, wich vertecies are shared with the cell of interest (only those change when the cell of interest is shifted)
-        shared_vertices_indices = np.zeros((len(neighbors), 2), dtype=int)
-        
-        # get the vertices of the cell of interest
-        midpoint_vertices = np.array(cells[i]['vertices'])
+        midpoint_vertices = np.array(cells_subset[0]['vertices'])
 
-        
+        shared_vertices_indices = []
+        neighboring_vertices_ls = []
+        for j, neighbor_idx in enumerate(neighbors_subset):
+            neighbor_cell = cells_subset[neighbor_idx]
+            neighbor_vertices = np.array(neighbor_cell['vertices'])
+            neighboring_vertices_ls.append(neighbor_vertices)
+            found = False
+            for face in neighbor_cell['faces']:
+                if face['adjacent_cell'] == indices_subset[0]:
+                    shared_vertices_indices.append(np.array(face['vertices']))
+                    found = True
+                    break
+            if not found:
+                raise Exception(f"Could not find face in neighbor {indices_subset[neighbor_idx]} pointing to middle cell {indices_subset[0]} in cell {i}")
 
-        #finding the shared vertices between the cell of interest and its neighbors
-        neighboring_vertices_ls, shared_vertices_indices, failed_init = \
-            find_shared_vertices(midpoint_vertices, cells, neighbors, L, kind = "Init: ")
-        
-        if failed_init:
-            raise Exception("Init: Finding shared vertices failed!")
-        
-        for d in range(2):  # x and y direction
+        for d in range(2):
             for eps_sign in [1, -1]:
                 shifted_points = np.copy(points_subset)
-                shifted_points[0, d] += eps_sign * epsilon  # try +epsilon first, then -epsilon if needed
-                
-                # compute the voronoi tessalation for the relevant subset
-                cells_subset = voronoi_tessellation(shifted_points, L, N)
-                # plot_voronoi_debugg(cells_subset, L, run = "new", step = 0, plot = True) #########################################
+                shifted_points[0, d] += eps_sign * epsilon
 
-        
-                # shared_vertices_shifted = np.empty(len(neighbors), dtype=object) # carefull!! here we consider the shifted vertices  not its indices
-                # get the vertices of the cell of interest
-                midpoint_vertices_shifted = np.array(cells_subset[0]['vertices'])
-
-                neighbors_subset = np.arange(1, len(neighbors)+1) # here we need to define a new neighbor so we can use the same loop as before
-
-                neighboring_vertices_ls_shifted, shared_vertices_indices_shifted, failed_shifted = \
-                    find_shared_vertices(midpoint_vertices_shifted, cells_subset, neighbors_subset, L, kind = "Shifted: ")
-                
-                shared_vertices_shifted = np.array([
-                    neighboring_vertices_ls_shifted[k][shared_vertices_indices_shifted[k]] for k in range(len(neighbors))])
+                cells_subset_shifted = voronoi_tessellation(shifted_points, L, len(indices_subset))
+                midpoint_vertices_shifted = np.array(cells_subset_shifted[0]['vertices'])
+                neighbors_subset_shifted = np.arange(1, len(neighbors)+1)
+                neighboring_vertices_ls_shifted = neighboring_vertices_ls
+                shared_vertices_shifted = []
+                failed_shifted = False
+                for j, neighbor_idx in enumerate(neighbors_subset_shifted):
+                    neighbor_cell_shifted = cells_subset_shifted[neighbor_idx]
+                    found = False
+                    for face in neighbor_cell_shifted['faces']:
+                        if face['adjacent_cell'] == 0:
+                            shared_idx = face['vertices']
+                            shared_vertices_shifted.append(np.array(neighbor_cell_shifted['vertices'])[shared_idx])
+                            found = True
+                            break
+                    if not found:
+                        print(f"Problem found with eps_sign = {eps_sign}, direction {d}, neighbor {indices_subset[neighbor_idx]} not found in shifted cell {i}. Retrying with opposite sign.")
+                        failed_shifted = True
+                        break
 
                 if failed_shifted:
                     if eps_sign == 1:
-                        print("Problem found with eps_sign = 1, trying eps_sign = -1")
+                        print("Retrying with eps_sign = -1")
+                        continue
                     else:
                         print("Problem found with eps_sign = -1, breaking")
                         break
 
-                    # shared_vertices_shifted[j] = neighboring_vertices_shifted[matching_indices_shifted]
+                # update ONLY the shared (adjacent) vertices of the neighboring cells
+                for j in range(len(neighbors)):
+                    old_shared = neighboring_vertices_ls[j][shared_vertices_indices[j]]
+                    neighboring_vertices_ls_shifted[j][shared_vertices_indices[j]] = reorder_two_by_distance(old_shared, shared_vertices_shifted[j])
+                    perimeters_subset[j+1] = polygon_perimeter(neighboring_vertices_ls_shifted[j])
+                    areas_subset[j+1] = polygon_area(neighboring_vertices_ls_shifted[j])
+
+                perimeters_subset[0] = polygon_perimeter(midpoint_vertices_shifted)
+                areas_subset[0] = polygon_area(midpoint_vertices_shifted)
+
+                energy_shifted = np.sum(K_A*(areas_subset-A_0)**2) + np.sum(K_P*(perimeters_subset-P_0)**2)
+                forces[i, d] = -(energy_shifted - energy_init) / (eps_sign * epsilon)
+                
+                # Check if the shifted computation was successful
                 if not failed_shifted:
                     if eps_sign == 1:
                         break
                     elif eps_sign == -1:
                         print("Retry with eps_sign = -1 successful!")
-
-            # update the vertecies of the neighboring cells that have changed (only the shared ones)
-            neighboring_vertices_ls_shifted = copy.copy(neighboring_vertices_ls)
-
-            for j, neighbor in enumerate(neighbors):
-
-                old_shared   = neighboring_vertices_ls[j][shared_vertices_indices[j]]
-                neighboring_vertices_ls_shifted[j][shared_vertices_indices[j]] = \
-                    reorder_two_by_distance(old_shared, shared_vertices_shifted[j])
-
-                #calculating the new perimeters and areas for the relevant subset
-                perimeters_subset[j+1] = polygon_perimeter(neighboring_vertices_ls_shifted[j])
-                areas_subset[j+1] = polygon_area(neighboring_vertices_ls_shifted[j])
-
-            #caluclate the new perimeter and area for the cell of interest
-            perimeters_subset[0] = polygon_perimeter(midpoint_vertices_shifted)
-            areas_subset[0] = polygon_area(midpoint_vertices_shifted)
-
-            # Compute new tissue energy with the shifted points
-            energy_shifted = np.sum(K_A*(areas_subset-A_0)**2) + np.sum(K_P*(perimeters_subset-P_0)**2)
-
-            # Compute force contribution
-            forces[i, d] = -(energy_shifted - energy_init) / (eps_sign * epsilon)  # Negative gradient
+                        break
 
     return forces
 
@@ -304,13 +326,12 @@ def compute_tissue_force_parallel(points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5
     
     # Compute Voronoi tessellation ONCE for all cells
     cells = voronoi_tessellation(points, L, N)
-    
-    # Compute forces in parallel, passing pre-computed tessellation data
-    forces_list = Parallel(n_jobs=n_jobs)(
-        delayed(compute_force_for_cell)(i, points, cells, K_A, A_0, K_P, P_0, L, N, epsilon) 
+    perimeters, areas, adjacency_matrix = properties_of_voronoi_tessellation(cells)
+    # Compute forces in parallel, passing pre-computed tessellation data and cells
+    forces_list = Parallel(n_jobs=n_jobs, backend='threading')(
+        delayed(compute_force_for_cell)(i, points, perimeters, areas, adjacency_matrix, cells, K_A, A_0, K_P, P_0, L, N, epsilon)
         for i in range(N)
     )
-    
     forces = np.array(forces_list)
     return forces
 

@@ -1,31 +1,52 @@
 import numpy as np
 
+from simulation.initialization import load_params
+from simulation.geometry import apply_mic
 
-def compute_msd_cm(traj):
+
+def compute_msd_unwrapped(run, com = True):
     """
-    Compute time-dependent MSD in the center-of-mass frame.
-    
-    Parameters:
-    traj : ndarray, shape (steps, N, 2)
-        Trajectories of N particles in d dimensions over steps time steps.
-    
-    Returns:
-    msd : ndarray, shape (steps,)
-        Time-dependent mean squared displacement (MSD).
+    Compute the mean squared displacement (MSD) from unwrapped particle trajectories.
+    The unwrapping procedure reconstructs the true particle trajectories by correcting for periodic boundary crossings using the minimum image convention.
+
+    Parameters
+    ----------
+    run : str
+        The identifier for the simulation run (used to load trajectory and parameters).
+    com : bool, optional
+        If True, subtract the center of mass motion from the trajectory (default: True).
+
+    Returns
+    -------
+    msd : np.ndarray
+        The mean squared displacement as a function of time.
+
     """
-    steps, N, d = traj.shape
 
-    # Subtract center-of-mass motion
-    r_cm = traj.mean(axis=1, keepdims=True)   # shape (steps, 1, 2)
-    traj_cm = traj - r_cm                     # shape (steps, N, 2)
+    #load trajectory
+    pos = np.load(f"data/{run}/pos_all.npy")
+    L = load_params(run)['L']
+    
+    # do unwrapping
+    delta_pos = pos[1:] - pos[:-1]
+    delta_pos_mic = delta_pos.copy()
+    delta_pos_mic = delta_pos_mic - L * np.round(delta_pos_mic / L)
+        
+    # Unwrap positions by cumulatively summing MIC-corrected displacements
+    pos_unwrapped = np.concatenate([
+        pos[:1],  # initial position
+        pos[0] + np.cumsum(delta_pos_mic, axis=0)
+    ], axis=0)
 
-    msd = np.zeros(steps)
+    #substract center of mass positions
+    if com:
+        pos_unwrapped -= np.mean(pos_unwrapped, axis=0)
 
-    for dt in range(steps):
-        displacements = traj_cm[dt:] - traj_cm[:steps - dt]   # shape (steps - dt, N, d)
-        squared_disp = np.sum(displacements**2, axis=2)   # shape (steps - dt, N)
-        msd[dt] = np.mean(squared_disp)                   # average over time and particles
+    # Compute MSD using unwrapped positions
+    displacements = pos_unwrapped - pos_unwrapped[0]
 
+    # Calculate MSD
+    msd = np.mean(np.mean(displacements**2, axis=-1), axis=-1)
     return msd
 
 def rdf_pol_alignment(points, polarizations, L, bins=100, r_max=None):
@@ -89,7 +110,7 @@ def rdf_pol_alignment(points, polarizations, L, bins=100, r_max=None):
 
     return bin_centers, alignment_rdf, g_r
 
-def rdf_pol_alignment_avg(trajectories, polarization_traj, L, bins=100, r_max=None):
+def rdf_pol_alignment_avg(run, bins=100, r_max=None):
     """
     Computes averaged:
     - Radial alignment function: ⟨p_i · p_j⟩(r)
@@ -108,7 +129,8 @@ def rdf_pol_alignment_avg(trajectories, polarization_traj, L, bins=100, r_max=No
     - avg_alignment_rdf: ndarray (bins,) -- average alignment at each r over all frames
     - avg_g_r: ndarray (bins,) -- average normalized RDF at each r over all frames
     """
-
+    trajectories, polarization_traj = np.load(f"data/{run}/pos_all.npy"), np.load(f"data/{run}/pol_all.npy")
+    L = load_params(run)['L']
     steps, N, _ = trajectories.shape
     box_area = L ** 2
     density = N / box_area
@@ -127,7 +149,7 @@ def rdf_pol_alignment_avg(trajectories, polarization_traj, L, bins=100, r_max=No
     # Accumulators
     alignment_rdf_sum = np.zeros(bins)
     g_r_sum = np.zeros(bins)
-    counts_per_bin = np.zeros(bins)  # to keep track of total counts per bin over all frames
+    counts_per_bin = np.zeros(bins)
 
     for t in range(steps):
         points = trajectories[t]
@@ -137,7 +159,7 @@ def rdf_pol_alignment_avg(trajectories, polarization_traj, L, bins=100, r_max=No
         delta = points[:, None] - points[None, :]
         delta = delta - L * np.round(delta / L)
         dists = np.linalg.norm(delta, axis=-1)
-        
+
         # Compute pairwise polarization alignment
         alignment = np.dot(polarizations, polarizations.T)  # (N, N)
 
@@ -146,15 +168,14 @@ def rdf_pol_alignment_avg(trajectories, polarization_traj, L, bins=100, r_max=No
         alignment_flat = alignment[i_idx, j_idx]
 
         bin_indices = np.digitize(dists_flat, bin_edges) - 1
+        valid = (bin_indices >= 0) & (bin_indices < bins)
+        bin_indices = bin_indices[valid]
+        alignment_flat = alignment_flat[valid]
 
-        for i in range(bins):
-            bin_mask = bin_indices == i
-            count = np.sum(bin_mask)
-
-            if count > 0:
-                alignment_rdf_sum[i] += np.sum(alignment_flat[bin_mask])
-                g_r_sum[i] += count
-                counts_per_bin[i] += count
+        # Vectorized accumulation
+        alignment_rdf_sum += np.bincount(bin_indices, weights=alignment_flat, minlength=bins)[:bins]
+        g_r_sum += np.bincount(bin_indices, minlength=bins)[:bins]
+        counts_per_bin += np.bincount(bin_indices, minlength=bins)[:bins]
 
     # Compute averages
     with np.errstate(divide='ignore', invalid='ignore'):

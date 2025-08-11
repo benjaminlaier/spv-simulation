@@ -2,7 +2,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
-from .analysis import compute_msd_cm, rdf_pol_alignment_avg
+from .analysis import compute_msd_unwrapped, rdf_pol_alignment_avg
 
 def plot_voronoi(
     cells,

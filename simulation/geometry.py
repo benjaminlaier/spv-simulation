@@ -45,12 +45,11 @@ def properties_of_voronoi_tessellation(cells):
     perimeters = np.zeros(N)
     areas = np.zeros(N)
     adjacency_matrix = np.zeros((N, N), dtype=int)
+    vertices_list = []
 
     for i, cell in enumerate(cells):
         # Perimeter
-        vertices = np.array(cell['vertices'])
-        diffs = np.diff(vertices, axis=0, append=vertices[:1])
-        perimeters[i] = np.sum(np.linalg.norm(diffs, axis=1))
+        perimeters[i] = polygon_perimeter(cell['vertices'])
 
         # Area
         areas[i] = cell['volume']
@@ -59,7 +58,6 @@ def properties_of_voronoi_tessellation(cells):
         for face in cell['faces']:
             j = face['adjacent_cell']
             adjacency_matrix[i, j] = 1
-            # Optional: make it symmetric
 
     return perimeters, areas, adjacency_matrix
 
@@ -148,7 +146,7 @@ def apply_mic(vertices, L):
 
     return vertices - np.floor(vertices / L) * L
 
-def find_shared_vertices(midpoint_vertices, cells, neighbors, L, kind):
+def find_shared_vertices(midpoint_vertices, vertices_list, neighbors, L, kind):
     """
     Identifies the shared vertices between a given cell and its neighboring cells,
     applying the minimum image convention (MIC) to handle periodic boundary conditions.
@@ -157,10 +155,10 @@ def find_shared_vertices(midpoint_vertices, cells, neighbors, L, kind):
     ----------
     midpoint_vertices : np.ndarray
         Array of vertex coordinates for the cell of interest.
-    cells : list or dict
-        Collection of all cells, where each cell contains a 'vertices' key with its vertex coordinates.
+    vertices_list : list of np.ndarray
+        List of vertex arrays for the cell of interest and its neighbors (subset).
     neighbors : list or np.ndarray
-        Indices or identifiers of neighboring cells to compare against the cell of interest.
+        Indices of neighbors in the subset (e.g., [1,2,...] for shifted subset, [1,2,...] for init subset).
     L : float or np.ndarray
         Size(s) of the simulation box, used for applying the minimum image convention.
     kind : str
@@ -186,22 +184,22 @@ def find_shared_vertices(midpoint_vertices, cells, neighbors, L, kind):
     """
     failed = False
     # Apply minimum image convention to both sets of vertices
-    midpoint_vertices_mic = apply_mic(midpoint_vertices, L)
+    midpoint_vertices_mic = np.round(apply_mic(midpoint_vertices, L),10)
 
     neighboring_vertices_ls = []
     shared_vertices_indices = np.zeros((len(neighbors), 2), dtype=int)
 
 
     for j, neighbor in enumerate(neighbors):
-        neighboring_vertices = np.array(cells[neighbor]['vertices'])
+        neighboring_vertices = vertices_list[neighbor]
         neighboring_vertices_ls.append(neighboring_vertices)
 
-        neighboring_vertices_mic = apply_mic(neighboring_vertices, L)
+        neighboring_vertices_mic = np.round(apply_mic(neighboring_vertices, L),10)
 
         # find the shared vertices between the cell of interest and its neighbors
         matches = np.any(
             np.all(
-                np.isclose(neighboring_vertices_mic[:, None, :], midpoint_vertices_mic[None, :, :], atol=1e-10, rtol = 1e-10),
+                np.isclose(neighboring_vertices_mic[:, None, :], midpoint_vertices_mic[None, :, :], atol = 1e-5, rtol = 1e-5),
                 axis=2
             ),
             axis=1
@@ -209,13 +207,8 @@ def find_shared_vertices(midpoint_vertices, cells, neighbors, L, kind):
         matching_indices = np.where(matches)[0]
         
         if len(matching_indices) != 2:
+            log_debug_info(kind, matching_indices, midpoint_vertices_mic, neighboring_vertices_mic, neighbor)
             print(kind, "Finding shared vertices failed!", matching_indices)
-            print("midpoint vertices mic: \n", midpoint_vertices_mic)
-            print("neighboring vertices mic: \n", neighboring_vertices_mic)
-            print("shared vertices: \n", matching_indices)
-            print("Neigbor:", neighbor)
-            plot_voronoi_debugg(cells, L, run = "new", step = 0, plot = True)
-            failed = True
         else:
             shared_vertices_indices[j] = matching_indices
     
@@ -298,4 +291,14 @@ def plot_voronoi_debugg(cells,L, run = "any", step = None, plot = True):
         plt.show()
     else:
         plt.close()
+
+import os
+
+def log_debug_info(kind, matching_indices, midpoint_vertices_mic, neighboring_vertices_mic, neighbor):
+    with open("debug_shared_vertices.txt", "a") as f:
+        f.write(f"{kind} Finding shared vertices failed! {matching_indices}\n")
+        f.write(f"midpoint vertices mic:\n{midpoint_vertices_mic}\n")
+        f.write(f"neighboring vertices mic:\n{neighboring_vertices_mic}\n")
+        f.write(f"shared vertices:\n{matching_indices}\n")
+        f.write(f"Neighbor: {neighbor}\n\n")
     
