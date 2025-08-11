@@ -42,12 +42,30 @@ def compute_msd_unwrapped(run, com = True):
     if com:
         pos_unwrapped -= np.mean(pos_unwrapped, axis=0)
 
-    # Compute MSD using unwrapped positions
-    displacements = pos_unwrapped - pos_unwrapped[0]
+    T, N, D = pos_unwrapped.shape
+    tau = np.arange(T)
+    den = (T - tau)  # number of pairs per lag
 
-    # Calculate MSD
-    msd = np.mean(np.mean(displacements**2, axis=-1), axis=-1)
-    return msd
+    # First term: <|r(t)|^2 + |r(t+tau)|^2>_{t,n}
+    # b(t) = mean_n |r_n(t)|^2
+    b = np.mean(np.sum(pos_unwrapped**2, axis=-1), axis=1)  # (T,)
+    cs = np.concatenate(([0.0], np.cumsum(b)))              # prefix sums length T+1
+
+    # sums over t=0..T-tau-1 of b(t) and b(t+tau)
+    sum_b_pre  = cs[T - tau]          # sum b[:T-tau]
+    sum_b_post = cs[T] - cs[tau]      # sum b[tau:]
+    term1 = (sum_b_pre + sum_b_post) / den
+
+    # Cross term: 2 * < r(t) · r(t+tau) >_{t,n}
+    # Do autocorrelation along time for every (n,d), sum their power spectra, iFFT back.
+    m = 1 << (2*T - 1).bit_length()   # zero-pad to avoid circular wrap
+    F = np.fft.rfft(pos_unwrapped, n=m, axis=0)             # (m//2+1, N, D)
+    S = np.sum(F * F.conj(), axis=(1, 2))                   # sum over N,D -> (m//2+1,)
+    ac = np.fft.irfft(S, n=m)[:T]                           # linear autocorr summed over N,D -> (T,)
+
+    cross = ac / den / N                                    # average over pairs and particles
+    msd = term1 - 2.0 * cross
+    return msds
 
 def rdf_pol_alignment(points, polarizations, L, bins=100, r_max=None):
     """
