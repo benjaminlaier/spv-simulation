@@ -323,16 +323,21 @@ def compute_tissue_force_parallel(points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5
         return compute_tissue_force(points, K_A, A_0, K_P, P_0, L, N, epsilon)
     
     N = len(points)
-    
+
     # Compute Voronoi tessellation ONCE for all cells
     cells = voronoi_tessellation(points, L, N)
     perimeters, areas, adjacency_matrix = properties_of_voronoi_tessellation(cells)
-    # Compute forces in parallel, passing pre-computed tessellation data and cells
+
+    # --- Batching logic ---
+    batch_size = 10
+    def compute_forces_batch(indices):
+        return [compute_force_for_cell(i, points, perimeters, areas, adjacency_matrix, cells, K_A, A_0, K_P, P_0, L, N, epsilon) for i in indices]
+
+    batches = [list(range(i, min(i+batch_size, N))) for i in range(0, N, batch_size)]
     forces_list = Parallel(n_jobs=n_jobs, backend='threading')(
-        delayed(compute_force_for_cell)(i, points, perimeters, areas, adjacency_matrix, cells, K_A, A_0, K_P, P_0, L, N, epsilon)
-        for i in range(N)
+        delayed(compute_forces_batch)(batch) for batch in batches
     )
-    forces = np.array(forces_list)
+    forces = np.vstack(forces_list)
     return forces
 
 def compute_tissue_force_slow(points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5):

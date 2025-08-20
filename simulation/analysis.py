@@ -65,7 +65,7 @@ def compute_msd_unwrapped(run, com = True):
 
     cross = ac / den / N                                    # average over pairs and particles
     msd = term1 - 2.0 * cross
-    return msds
+    return msd
 
 def rdf_pol_alignment(points, polarizations, L, bins=100, r_max=None):
     """
