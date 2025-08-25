@@ -14,7 +14,7 @@ from simulation import (
     make_video_from_images
     )
 
-def simulation_loop(N = 100, phi = 1.0, dt = 0.01, T = 100, P_0 = 3.8, J = 0.00, run = 'any', equi_steps = 200, plot = False, save_interval = 5, load_run = None, n_jobs = -1, use_parallel = True):
+def simulation_loop(N = 100, phi = 1.0, dt = 0.01, T = 100, P_0 = 3.8, J = 0.00, run = 'any', equi_steps = 200, plot = False, save_interval = 5, load_run = None, n_jobs = -1, use_parallel = True, batch_size = 8):
 
     # initialize parameters
     L = np.sqrt(N / phi) # Box size
@@ -51,7 +51,7 @@ def simulation_loop(N = 100, phi = 1.0, dt = 0.01, T = 100, P_0 = 3.8, J = 0.00,
     # initialize box/configuration
     print(f"Initializing box with {N} cells...", flush=True)
     if load_run is not None:
-        pos, pol = load_configuration(load_run, N)
+        pos, pol = load_configuration(load_run)
     else:
         pos, pol = initialize_box(N, L)
 
@@ -60,7 +60,7 @@ def simulation_loop(N = 100, phi = 1.0, dt = 0.01, T = 100, P_0 = 3.8, J = 0.00,
     for i in tqdm(range(equi_steps)):
         if use_parallel:
             pos, pol = update_positions_and_polarizations_parallel(
-                pos, pol, K_A, A_0, K_P, P_0, f_0, mu, J, dt, D_r, N, L, n_jobs=n_jobs)
+                pos, pol, K_A, A_0, K_P, P_0, f_0, mu, J, dt, D_r, N, L, n_jobs=n_jobs, batch_size=batch_size)
         else:
             pos, pol = update_positions_and_polarizations(
                 pos, pol, K_A, A_0, K_P, P_0, f_0, mu, J, dt, D_r, N, L)

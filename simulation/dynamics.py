@@ -288,7 +288,7 @@ def compute_tissue_force(points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5):
 
     return forces
 
-def compute_tissue_force_parallel(points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5, n_jobs=-1):
+def compute_tissue_force_parallel(points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5, n_jobs=-1, batch_size = 8):
     """
     Compute the forces on each cell arising from the tissue energy functional using parallel processing.
 
@@ -312,6 +312,8 @@ def compute_tissue_force_parallel(points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5
         Small shift for numerical gradient calculation.
     n_jobs : int
         Number of parallel jobs. -1 uses all available cores.
+    batch_size : int
+        Number of cells to process in each batch.
 
     Returns
     -------
@@ -329,7 +331,7 @@ def compute_tissue_force_parallel(points, K_A, A_0, K_P, P_0, L, N, epsilon=1e-5
     perimeters, areas, adjacency_matrix = properties_of_voronoi_tessellation(cells)
 
     # --- Batching logic ---
-    batch_size = 10
+
     def compute_forces_batch(indices):
         return [compute_force_for_cell(i, points, perimeters, areas, adjacency_matrix, cells, K_A, A_0, K_P, P_0, L, N, epsilon) for i in indices]
 
@@ -477,7 +479,7 @@ def update_positions_and_polarizations(points, polarizations, K_A, A_0, K_P, P_0
 
     return new_points, new_polarizations
 
-def update_positions_and_polarizations_parallel(points, polarizations, K_A, A_0, K_P, P_0, f_0, mu, J, dt, D_r, N, L, epsilon=1e-5, n_jobs=-1):
+def update_positions_and_polarizations_parallel(points, polarizations, K_A, A_0, K_P, P_0, f_0, mu, J, dt, D_r, N, L, epsilon=1e-5, n_jobs=-1, batch_size=8):
     """
     Update cell positions and polarizations using parallel force calculation.
 
@@ -522,7 +524,7 @@ def update_positions_and_polarizations_parallel(points, polarizations, K_A, A_0,
         Updated, normalized polarization vectors.
     """
     # Compute total forces (passive + active) with parallel processing
-    forces = compute_tissue_force_parallel(points, K_A, A_0, K_P, P_0, L, N, epsilon, n_jobs) + compute_active_force(polarizations, f_0)
+    forces = compute_tissue_force_parallel(points, K_A, A_0, K_P, P_0, L, N, epsilon, n_jobs, batch_size) + compute_active_force(polarizations, f_0)
 
     # Update positions using overdamped dynamics: dr/dt = mu * F
     new_points = points + mu * forces * dt
